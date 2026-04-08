@@ -48,6 +48,65 @@ try {
         exit;
     }
 
+    if ($method === 'PUT') {
+        $goalId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+        $body = json_decode(file_get_contents('php://input') ?: '{}', true);
+        $goal = isset($body['goal']) ? trim((string) $body['goal']) : '';
+
+        if ($goalId <= 0) {
+            http_response_code(422);
+            echo json_encode(['error' => 'ID do objetivo inválido.']);
+            exit;
+        }
+
+        if ($goal === '') {
+            http_response_code(422);
+            echo json_encode(['error' => 'O objetivo é obrigatório.']);
+            exit;
+        }
+
+        $updateStmt = $pdo->prepare('UPDATE goals SET goal = :goal WHERE id = :id');
+        $updateStmt->execute([
+            'goal' => $goal,
+            'id' => $goalId,
+        ]);
+
+        if ($updateStmt->rowCount() === 0) {
+            $checkStmt = $pdo->prepare('SELECT id FROM goals WHERE id = :id');
+            $checkStmt->execute(['id' => $goalId]);
+            if (!$checkStmt->fetch()) {
+                http_response_code(404);
+                echo json_encode(['error' => 'Objetivo não encontrado.']);
+                exit;
+            }
+        }
+
+        echo json_encode(['ok' => true, 'id' => $goalId]);
+        exit;
+    }
+
+    if ($method === 'DELETE') {
+        $goalId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+
+        if ($goalId <= 0) {
+            http_response_code(422);
+            echo json_encode(['error' => 'ID do objetivo inválido.']);
+            exit;
+        }
+
+        $deleteStmt = $pdo->prepare('DELETE FROM goals WHERE id = :id');
+        $deleteStmt->execute(['id' => $goalId]);
+
+        if ($deleteStmt->rowCount() === 0) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Objetivo não encontrado.']);
+            exit;
+        }
+
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
     $parentId = isset($_GET['parent_id']) && $_GET['parent_id'] !== '' ? (int) $_GET['parent_id'] : null;
 
     $listSql = 'SELECT id, goal, parent_id FROM goals WHERE parent_id <=> :parent_id ORDER BY id DESC';
