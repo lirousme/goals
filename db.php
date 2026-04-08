@@ -91,8 +91,20 @@ CREATE TABLE IF NOT EXISTS goal_links (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 SQL;
 
+    $homePinsSql = <<<SQL
+CREATE TABLE IF NOT EXISTS goal_home_pins (
+    goal_id INT UNSIGNED NOT NULL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_goal_home_pins_goal FOREIGN KEY (goal_id)
+        REFERENCES goals(id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL;
+
     $pdo->exec($goalsSql);
     $pdo->exec($linksSql);
+    $pdo->exec($homePinsSql);
 
     // Migração automática de versões antigas (goals.parent_id -> goal_links).
     $legacyColumnStmt = $pdo->query("SHOW COLUMNS FROM goals LIKE 'parent_id'");

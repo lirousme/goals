@@ -70,6 +70,9 @@
         <button type="button" id="adoptGoalBtn" class="w-full rounded-lg border border-emerald-700 bg-emerald-900/60 px-4 py-2 hover:bg-emerald-800/70">
           Adotar (copiar ID para adoção compartilhada)
         </button>
+        <button type="button" id="toggleHomePinBtn" class="w-full rounded-lg border border-fuchsia-700 bg-fuchsia-900/50 px-4 py-2 hover:bg-fuchsia-800/60">
+          Mostrar na página inicial
+        </button>
 
         <div class="flex justify-between gap-2">
           <button type="button" id="deleteGoalBtn" class="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600">Excluir</button>
@@ -107,6 +110,7 @@
     const deleteGoalBtn = document.getElementById('deleteGoalBtn');
     const closeSettingsModalBtn = document.getElementById('closeSettingsModalBtn');
     const adoptGoalBtn = document.getElementById('adoptGoalBtn');
+    const toggleHomePinBtn = document.getElementById('toggleHomePinBtn');
     let selectedGoal = null;
 
     if (currentId) {
@@ -161,6 +165,9 @@
     function openSettingsModal(item) {
       selectedGoal = item;
       settingsGoalInput.value = item.goal || '';
+      toggleHomePinBtn.textContent = item.is_pinned_home
+        ? 'Remover da página inicial'
+        : 'Mostrar na página inicial';
       settingsModal.classList.remove('hidden');
       settingsModal.classList.add('flex');
       settingsGoalInput.focus();
@@ -235,6 +242,34 @@
       closeSettingsModal();
     });
 
+    toggleHomePinBtn.addEventListener('click', async () => {
+      if (!selectedGoal) {
+        return;
+      }
+
+      const action = selectedGoal.is_pinned_home ? 'unpin_home' : 'pin_home';
+
+      try {
+        const response = await fetch('api.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action,
+            goal_id: selectedGoal.id,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.details || data.error || 'Erro ao atualizar destaque na página inicial.');
+        }
+
+        closeSettingsModal();
+        await fetchGoals();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
     async function fetchGoals() {
       try {
         statusEl.textContent = 'Carregando objetivos...';
@@ -275,6 +310,7 @@
             ⚙
           </button>
           <h3 class="text-base font-semibold mb-2 pr-8">${escapeHtml(item.goal)}</h3>
+          ${item.is_pinned_home ? '<span class="inline-block mb-2 text-[11px] rounded-md px-2 py-1 border border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300">Fixado na página inicial</span>' : ''}
           <button type="button" class="last-goal-tag inline-block text-left text-xs font-medium rounded-full px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 transition">
             Último objetivo da família: ${escapeHtml(item.last_goal || item.goal)}
           </button>
