@@ -42,7 +42,7 @@ function getDbConnection(): PDO
         return $pdo;
     }
 
-    $rootEnv = loadEnvFile('/.env');
+    $rootEnv = loadEnvFile('.env');
 
     $host = $rootEnv['DB_HOST'] ?? getenv('DB_HOST') ?: '127.0.0.1';
     $name = $rootEnv['DB_NAME'] ?? getenv('DB_NAME') ?: '';
