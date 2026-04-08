@@ -18,13 +18,17 @@
         <h1 class="text-xl font-semibold">Mapa de Objetivos</h1>
         <p id="breadcrumb" class="text-sm text-zinc-400"></p>
       </div>
-      <button id="openModalBtn" class="h-10 w-10 rounded-full bg-blue-600 hover:bg-blue-500 transition text-xl font-bold">+</button>
+      <div class="flex items-center gap-2">
+        <button id="createSharedAdoptionBtn" class="hidden rounded-lg border border-emerald-700 bg-emerald-900/60 px-3 py-2 text-sm hover:bg-emerald-800/70">Criar adoção compartilhada</button>
+        <button id="openModalBtn" class="h-10 w-10 rounded-full bg-blue-600 hover:bg-blue-500 transition text-xl font-bold">+</button>
+      </div>
     </div>
   </header>
 
   <main class="max-w-5xl mx-auto px-4 py-6">
-    <div class="mb-4">
+    <div class="mb-4 flex flex-col gap-2">
       <a id="backLink" href="index.html" class="hidden text-sm text-blue-400 hover:text-blue-300">← Voltar um nível</a>
+      <p id="adoptionInfo" class="text-xs text-zinc-400"></p>
     </div>
     <div id="status" class="text-zinc-400 mb-4"></div>
     <section id="cards" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></section>
@@ -63,6 +67,10 @@
             class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
 
+        <button type="button" id="adoptGoalBtn" class="w-full rounded-lg border border-emerald-700 bg-emerald-900/60 px-4 py-2 hover:bg-emerald-800/70">
+          Adotar (copiar ID para adoção compartilhada)
+        </button>
+
         <div class="flex justify-between gap-2">
           <button type="button" id="deleteGoalBtn" class="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600">Excluir</button>
           <div class="flex gap-2">
@@ -78,10 +86,15 @@
     const query = new URLSearchParams(window.location.search);
     const currentId = query.get('id');
 
+    const ADOPTED_GOAL_ID_KEY = 'adopted_goal_id';
+    const ADOPTED_GOAL_NAME_KEY = 'adopted_goal_name';
+
     const breadcrumb = document.getElementById('breadcrumb');
     const cardsContainer = document.getElementById('cards');
     const statusEl = document.getElementById('status');
     const backLink = document.getElementById('backLink');
+    const adoptionInfo = document.getElementById('adoptionInfo');
+    const createSharedAdoptionBtn = document.getElementById('createSharedAdoptionBtn');
     const modal = document.getElementById('modal');
     const openModalBtn = document.getElementById('openModalBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
@@ -93,6 +106,7 @@
     const settingsGoalInput = document.getElementById('settingsGoalInput');
     const deleteGoalBtn = document.getElementById('deleteGoalBtn');
     const closeSettingsModalBtn = document.getElementById('closeSettingsModalBtn');
+    const adoptGoalBtn = document.getElementById('adoptGoalBtn');
     let selectedGoal = null;
 
     if (currentId) {
@@ -103,6 +117,32 @@
       backLink.classList.remove('hidden');
     } else {
       breadcrumb.textContent = 'Exibindo objetivos raiz';
+    }
+
+    function getAdoptedGoal() {
+      const id = localStorage.getItem(ADOPTED_GOAL_ID_KEY);
+      const name = localStorage.getItem(ADOPTED_GOAL_NAME_KEY);
+      if (!id) {
+        return null;
+      }
+      return { id: Number(id), name: name || `#${id}` };
+    }
+
+    function refreshAdoptionUi() {
+      const adopted = getAdoptedGoal();
+      if (!adopted) {
+        adoptionInfo.textContent = 'Nenhum objetivo selecionado para adoção compartilhada.';
+        createSharedAdoptionBtn.classList.add('hidden');
+        return;
+      }
+
+      adoptionInfo.textContent = `Objetivo selecionado para adoção compartilhada: ${adopted.name} (ID ${adopted.id}).`;
+
+      if (currentId && Number(currentId) !== adopted.id) {
+        createSharedAdoptionBtn.classList.remove('hidden');
+      } else {
+        createSharedAdoptionBtn.classList.add('hidden');
+      }
     }
 
     function openModal() {
@@ -145,6 +185,54 @@
       if (event.target === settingsModal) {
         closeSettingsModal();
       }
+    });
+
+    createSharedAdoptionBtn.addEventListener('click', async () => {
+      const adopted = getAdoptedGoal();
+      if (!currentId || !adopted) {
+        return;
+      }
+
+      try {
+        const response = await fetch('api.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'adopt',
+            parent_id: Number(currentId),
+            child_id: adopted.id,
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.details || data.error || 'Erro ao criar adoção compartilhada.');
+        }
+
+        alert(`Adoção compartilhada criada com sucesso para "${adopted.name}".`);
+        await fetchGoals();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    adoptGoalBtn.addEventListener('click', async () => {
+      if (!selectedGoal) {
+        return;
+      }
+
+      localStorage.setItem(ADOPTED_GOAL_ID_KEY, String(selectedGoal.id));
+      localStorage.setItem(ADOPTED_GOAL_NAME_KEY, selectedGoal.goal || `#${selectedGoal.id}`);
+
+      try {
+        await navigator.clipboard.writeText(String(selectedGoal.id));
+        alert(`Objetivo ID ${selectedGoal.id} copiado. Agora entre em outro objetivo e clique em "Criar adoção compartilhada".`);
+      } catch {
+        alert(`Objetivo ID ${selectedGoal.id} salvo para adoção compartilhada. O navegador bloqueou a cópia automática.`);
+      }
+
+      refreshAdoptionUi();
+      closeSettingsModal();
     });
 
     async function fetchGoals() {
@@ -295,7 +383,7 @@
         return;
       }
 
-      const confirmed = window.confirm('Deseja realmente excluir este objetivo?');
+      const confirmed = window.confirm('Deseja realmente excluir este objetivo? Objetivos compartilhados em outros lugares continuarão existindo.');
       if (!confirmed) {
         return;
       }
@@ -314,6 +402,7 @@
       }
     });
 
+    refreshAdoptionUi();
     fetchGoals();
   </script>
 </body>
