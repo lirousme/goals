@@ -77,6 +77,7 @@ SQL;
 CREATE TABLE IF NOT EXISTS goal_links (
     parent_id INT UNSIGNED NOT NULL,
     child_id INT UNSIGNED NOT NULL,
+    sort_order INT UNSIGNED NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (parent_id, child_id),
     INDEX idx_goal_links_child (child_id),
@@ -85,6 +86,18 @@ CREATE TABLE IF NOT EXISTS goal_links (
         ON DELETE CASCADE
         ON UPDATE CASCADE,
     CONSTRAINT fk_goal_links_child FOREIGN KEY (child_id)
+        REFERENCES goals(id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL;
+
+    $rootOrderSql = <<<SQL
+CREATE TABLE IF NOT EXISTS goal_root_order (
+    goal_id INT UNSIGNED NOT NULL PRIMARY KEY,
+    sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_goal_root_order_goal FOREIGN KEY (goal_id)
         REFERENCES goals(id)
         ON DELETE CASCADE
         ON UPDATE CASCADE
@@ -104,7 +117,44 @@ SQL;
 
     $pdo->exec($goalsSql);
     $pdo->exec($linksSql);
+    $pdo->exec($rootOrderSql);
     $pdo->exec($homePinsSql);
+
+    $hasSortOrderOnLinksStmt = $pdo->query("SHOW COLUMNS FROM goal_links LIKE 'sort_order'");
+    $hasSortOrderOnLinks = (bool) $hasSortOrderOnLinksStmt->fetch();
+    if (!$hasSortOrderOnLinks) {
+        $pdo->exec('ALTER TABLE goal_links ADD COLUMN sort_order INT UNSIGNED NOT NULL DEFAULT 0 AFTER child_id');
+    }
+
+    $hasRootOrderTableStmt = $pdo->query("SHOW TABLES LIKE 'goal_root_order'");
+    $hasRootOrderTable = (bool) $hasRootOrderTableStmt->fetch();
+    if (!$hasRootOrderTable) {
+        $pdo->exec($rootOrderSql);
+    }
+
+    $pdo->exec(<<<SQL
+UPDATE goal_links gl
+INNER JOIN (
+    SELECT parent_id, child_id, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY child_id DESC) AS new_sort_order
+    FROM goal_links
+) ranked ON ranked.parent_id = gl.parent_id AND ranked.child_id = gl.child_id
+SET gl.sort_order = ranked.new_sort_order
+WHERE gl.sort_order = 0;
+SQL);
+
+    $pdo->exec(<<<SQL
+INSERT INTO goal_root_order (goal_id, sort_order)
+SELECT ranked.id, ranked.new_sort_order
+FROM (
+    SELECT
+        g.id,
+        ROW_NUMBER() OVER (ORDER BY g.id DESC) AS new_sort_order
+    FROM goals g
+    LEFT JOIN goal_links gl ON gl.child_id = g.id
+    WHERE gl.child_id IS NULL
+) ranked
+ON DUPLICATE KEY UPDATE sort_order = goal_root_order.sort_order;
+SQL);
 
     // Migração automática de versões antigas (goals.parent_id -> goal_links).
     $legacyColumnStmt = $pdo->query("SHOW COLUMNS FROM goals LIKE 'parent_id'");

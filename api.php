@@ -50,6 +50,21 @@ SQL);
     return (bool) $stmt->fetchColumn();
 }
 
+function getNextChildSortOrder(PDO $pdo, int $parentId): int
+{
+    $stmt = $pdo->prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 FROM goal_links WHERE parent_id = :parent_id');
+    $stmt->execute(['parent_id' => $parentId]);
+
+    return (int) $stmt->fetchColumn();
+}
+
+function getNextRootSortOrder(PDO $pdo): int
+{
+    $stmt = $pdo->query('SELECT COALESCE(MAX(sort_order), 0) + 1 FROM goal_root_order');
+
+    return (int) $stmt->fetchColumn();
+}
+
 try {
     $pdo = getDbConnection();
     ensureGoalsTable($pdo);
@@ -76,10 +91,12 @@ try {
                 jsonError('Esta adoção criaria um ciclo na árvore de objetivos.');
             }
 
-            $linkStmt = $pdo->prepare('INSERT IGNORE INTO goal_links (parent_id, child_id) VALUES (:parent_id, :child_id)');
+            $nextSortOrder = getNextChildSortOrder($pdo, $parentId);
+            $linkStmt = $pdo->prepare('INSERT IGNORE INTO goal_links (parent_id, child_id, sort_order) VALUES (:parent_id, :child_id, :sort_order)');
             $linkStmt->execute([
                 'parent_id' => $parentId,
                 'child_id' => $childId,
+                'sort_order' => $nextSortOrder,
             ]);
 
             echo json_encode(['ok' => true, 'parent_id' => $parentId, 'child_id' => $childId]);
@@ -109,6 +126,88 @@ try {
             exit;
         }
 
+        if ($action === 'reorder') {
+            $parentIdRaw = $body['parent_id'] ?? null;
+            $orderedIdsRaw = $body['ordered_ids'] ?? null;
+            $parentId = ($parentIdRaw === null || $parentIdRaw === '' || $parentIdRaw === 0 || $parentIdRaw === '0')
+                ? null
+                : (int) $parentIdRaw;
+
+            if (!is_array($orderedIdsRaw) || count($orderedIdsRaw) === 0) {
+                jsonError('A nova ordem de objetivos é obrigatória.');
+            }
+
+            $orderedIds = array_values(array_unique(array_map('intval', $orderedIdsRaw)));
+            if ($parentId !== null && !goalExists($pdo, $parentId)) {
+                jsonError('Objetivo pai não encontrado.', 404);
+            }
+
+            $pdo->beginTransaction();
+            try {
+                if ($parentId === null) {
+                    $existingStmt = $pdo->query(<<<SQL
+SELECT DISTINCT g.id
+FROM goals g
+LEFT JOIN goal_links gl ON gl.child_id = g.id
+LEFT JOIN goal_home_pins ghp ON ghp.goal_id = g.id
+WHERE gl.child_id IS NULL OR ghp.goal_id IS NOT NULL
+SQL);
+                    $existingIds = array_map('intval', array_column($existingStmt->fetchAll(), 'id'));
+                    sort($existingIds);
+                    $incomingIds = $orderedIds;
+                    sort($incomingIds);
+                    if ($existingIds !== $incomingIds) {
+                        throw new RuntimeException('A lista enviada para reordenação da raiz está inconsistente.');
+                    }
+
+                    $upsertStmt = $pdo->prepare(<<<SQL
+INSERT INTO goal_root_order (goal_id, sort_order)
+VALUES (:goal_id, :sort_order)
+ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order)
+SQL);
+                    foreach ($orderedIds as $index => $goalId) {
+                        $upsertStmt->execute([
+                            'goal_id' => $goalId,
+                            'sort_order' => $index + 1,
+                        ]);
+                    }
+                } else {
+                    $existingStmt = $pdo->prepare('SELECT child_id FROM goal_links WHERE parent_id = :parent_id');
+                    $existingStmt->execute(['parent_id' => $parentId]);
+                    $existingIds = array_map('intval', array_column($existingStmt->fetchAll(), 'child_id'));
+                    sort($existingIds);
+                    $incomingIds = $orderedIds;
+                    sort($incomingIds);
+                    if ($existingIds !== $incomingIds) {
+                        throw new RuntimeException('A lista enviada para reordenação de filhos está inconsistente.');
+                    }
+
+                    $updateStmt = $pdo->prepare(<<<SQL
+UPDATE goal_links
+SET sort_order = :sort_order
+WHERE parent_id = :parent_id AND child_id = :child_id
+SQL);
+                    foreach ($orderedIds as $index => $childId) {
+                        $updateStmt->execute([
+                            'sort_order' => $index + 1,
+                            'parent_id' => $parentId,
+                            'child_id' => $childId,
+                        ]);
+                    }
+                }
+
+                $pdo->commit();
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $exception;
+            }
+
+            echo json_encode(['ok' => true, 'parent_id' => $parentId, 'ordered_ids' => $orderedIds]);
+            exit;
+        }
+
         $goal = isset($body['goal']) ? trim((string) $body['goal']) : '';
         $parentId = $body['parent_id'] ?? null;
 
@@ -132,10 +231,17 @@ try {
         $newId = (int) $pdo->lastInsertId();
 
         if ($parentId !== null) {
-            $linkStmt = $pdo->prepare('INSERT INTO goal_links (parent_id, child_id) VALUES (:parent_id, :child_id)');
+            $linkStmt = $pdo->prepare('INSERT INTO goal_links (parent_id, child_id, sort_order) VALUES (:parent_id, :child_id, :sort_order)');
             $linkStmt->execute([
                 'parent_id' => $parentId,
                 'child_id' => $newId,
+                'sort_order' => getNextChildSortOrder($pdo, $parentId),
+            ]);
+        } else {
+            $rootOrderStmt = $pdo->prepare('INSERT INTO goal_root_order (goal_id, sort_order) VALUES (:goal_id, :sort_order)');
+            $rootOrderStmt->execute([
+                'goal_id' => $newId,
+                'sort_order' => getNextRootSortOrder($pdo),
             ]);
         }
 
@@ -200,8 +306,9 @@ SELECT DISTINCT g.id, g.goal, CASE WHEN ghp.goal_id IS NULL THEN 0 ELSE 1 END AS
 FROM goals g
 LEFT JOIN goal_links gl ON gl.child_id = g.id
 LEFT JOIN goal_home_pins ghp ON ghp.goal_id = g.id
+LEFT JOIN goal_root_order gro ON gro.goal_id = g.id
 WHERE gl.child_id IS NULL OR ghp.goal_id IS NOT NULL
-ORDER BY g.id DESC;
+ORDER BY COALESCE(gro.sort_order, 999999), g.id DESC;
 SQL;
         $listStmt = $pdo->query($listSql);
     } else {
@@ -211,7 +318,7 @@ FROM goal_links gl
 INNER JOIN goals g ON g.id = gl.child_id
 LEFT JOIN goal_home_pins ghp ON ghp.goal_id = g.id
 WHERE gl.parent_id = :parent_id
-ORDER BY g.id DESC;
+ORDER BY gl.sort_order ASC, g.id DESC;
 SQL;
         $listStmt = $pdo->prepare($listSql);
         $listStmt->execute(['parent_id' => $parentId]);
@@ -235,7 +342,7 @@ WITH RECURSIVE walk AS (
         c.goal,
         w.root_id,
         w.depth + 1,
-        CONCAT(w.path, ',', c.id) AS path
+        CONCAT(w.path, ',', LPAD(gl.sort_order, 10, '0'), ':', c.id) AS path
     FROM walk w
     INNER JOIN goal_links gl ON gl.parent_id = w.id
     INNER JOIN goals c ON c.id = gl.child_id
@@ -247,7 +354,10 @@ ranked AS (
         id,
         goal,
         depth,
-        ROW_NUMBER() OVER (PARTITION BY root_id ORDER BY depth DESC, id DESC) AS rn
+        ROW_NUMBER() OVER (
+            PARTITION BY root_id
+            ORDER BY path DESC, depth DESC, id DESC
+        ) AS rn
     FROM walk
 )
 SELECT root_id, id AS deepest_id, goal AS deepest_goal, depth
@@ -256,7 +366,7 @@ WHERE rn = 1
 LIMIT 1;
 SQL);
 
-    $directChildrenStmt = $pdo->prepare('SELECT child_id FROM goal_links WHERE parent_id = :parent_id');
+    $directChildrenStmt = $pdo->prepare('SELECT child_id FROM goal_links WHERE parent_id = :parent_id ORDER BY sort_order ASC, child_id DESC');
 
     foreach ($goals as &$goalRow) {
         $goalId = (int) $goalRow['id'];
