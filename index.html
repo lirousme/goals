@@ -136,9 +136,9 @@
         card.className = 'rounded-xl border border-zinc-800 bg-zinc-900 p-4 hover:border-blue-500 transition cursor-pointer';
         card.innerHTML = `
           <h3 class="text-base font-semibold mb-2">${escapeHtml(item.goal)}</h3>
-          <p class="inline-block text-xs font-medium rounded-full px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30">
+          <button type="button" class="last-goal-tag inline-block text-left text-xs font-medium rounded-full px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 transition">
             Último objetivo da família: ${escapeHtml(item.last_goal || item.goal)}
-          </p>
+          </button>
         `;
 
         card.addEventListener('click', () => {
@@ -146,6 +146,16 @@
           next.searchParams.set('id', item.id);
           window.location.href = next.pathname + next.search;
         });
+
+        const lastGoalTag = card.querySelector('.last-goal-tag');
+        if (lastGoalTag) {
+          lastGoalTag.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const next = new URL(window.location.href);
+            next.searchParams.set('id', item.last_goal_id || item.id);
+            window.location.href = next.pathname + next.search;
+          });
+        }
 
         cardsContainer.appendChild(card);
       });
