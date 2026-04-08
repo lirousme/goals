@@ -86,6 +86,29 @@ try {
             exit;
         }
 
+        if ($action === 'pin_home' || $action === 'unpin_home') {
+            $goalId = isset($body['goal_id']) ? (int) $body['goal_id'] : 0;
+
+            if ($goalId <= 0) {
+                jsonError('ID inválido para destacar na página inicial.');
+            }
+
+            if (!goalExists($pdo, $goalId)) {
+                jsonError('Objetivo não encontrado.', 404);
+            }
+
+            if ($action === 'pin_home') {
+                $pinStmt = $pdo->prepare('INSERT IGNORE INTO goal_home_pins (goal_id) VALUES (:goal_id)');
+                $pinStmt->execute(['goal_id' => $goalId]);
+            } else {
+                $unpinStmt = $pdo->prepare('DELETE FROM goal_home_pins WHERE goal_id = :goal_id');
+                $unpinStmt->execute(['goal_id' => $goalId]);
+            }
+
+            echo json_encode(['ok' => true, 'goal_id' => $goalId, 'action' => $action]);
+            exit;
+        }
+
         $goal = isset($body['goal']) ? trim((string) $body['goal']) : '';
         $parentId = $body['parent_id'] ?? null;
 
@@ -173,18 +196,20 @@ try {
 
     if ($parentId === null) {
         $listSql = <<<SQL
-SELECT g.id, g.goal
+SELECT DISTINCT g.id, g.goal, CASE WHEN ghp.goal_id IS NULL THEN 0 ELSE 1 END AS is_pinned_home
 FROM goals g
 LEFT JOIN goal_links gl ON gl.child_id = g.id
-WHERE gl.child_id IS NULL
+LEFT JOIN goal_home_pins ghp ON ghp.goal_id = g.id
+WHERE gl.child_id IS NULL OR ghp.goal_id IS NOT NULL
 ORDER BY g.id DESC;
 SQL;
         $listStmt = $pdo->query($listSql);
     } else {
         $listSql = <<<SQL
-SELECT g.id, g.goal
+SELECT g.id, g.goal, CASE WHEN ghp.goal_id IS NULL THEN 0 ELSE 1 END AS is_pinned_home
 FROM goal_links gl
 INNER JOIN goals g ON g.id = gl.child_id
+LEFT JOIN goal_home_pins ghp ON ghp.goal_id = g.id
 WHERE gl.parent_id = :parent_id
 ORDER BY g.id DESC;
 SQL;
@@ -235,6 +260,7 @@ SQL);
 
     foreach ($goals as &$goalRow) {
         $goalId = (int) $goalRow['id'];
+        $goalRow['is_pinned_home'] = (bool) ((int) ($goalRow['is_pinned_home'] ?? 0));
         $deepestStmt->execute(['root_id' => $goalId]);
         $deepest = $deepestStmt->fetch();
 
