@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Objetivos</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class'
+    };
+  </script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <header class="border-b border-zinc-800 sticky top-0 backdrop-blur bg-zinc-950/90 z-10">
+    <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-semibold">Mapa de Objetivos</h1>
+        <p id="breadcrumb" class="text-sm text-zinc-400"></p>
+      </div>
+      <button id="openModalBtn" class="h-10 w-10 rounded-full bg-blue-600 hover:bg-blue-500 transition text-xl font-bold">+</button>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6">
+    <div class="mb-4">
+      <a id="backLink" href="index.html" class="hidden text-sm text-blue-400 hover:text-blue-300">← Voltar um nível</a>
+    </div>
+    <div id="status" class="text-zinc-400 mb-4"></div>
+    <section id="cards" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></section>
+  </main>
+
+  <div id="modal" class="hidden fixed inset-0 bg-black/60 items-center justify-center p-4">
+    <div class="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-5">
+      <h2 class="text-lg font-semibold mb-4">Novo objetivo</h2>
+      <form id="goalForm" class="space-y-4">
+        <div>
+          <label for="goalInput" class="text-sm text-zinc-300">Nome do objetivo</label>
+          <input id="goalInput" type="text" required maxlength="255"
+            class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+
+        <label class="flex items-center gap-2 text-sm text-zinc-300">
+          <input id="asRoot" type="checkbox" class="accent-blue-600" />
+          Criar como objetivo raiz
+        </label>
+
+        <div class="flex justify-end gap-2">
+          <button type="button" id="closeModalBtn" class="px-4 py-2 rounded-lg border border-zinc-700 hover:bg-zinc-800">Cancelar</button>
+          <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const query = new URLSearchParams(window.location.search);
+    const currentId = query.get('id');
+
+    const breadcrumb = document.getElementById('breadcrumb');
+    const cardsContainer = document.getElementById('cards');
+    const statusEl = document.getElementById('status');
+    const backLink = document.getElementById('backLink');
+    const modal = document.getElementById('modal');
+    const openModalBtn = document.getElementById('openModalBtn');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    const goalForm = document.getElementById('goalForm');
+    const goalInput = document.getElementById('goalInput');
+    const asRoot = document.getElementById('asRoot');
+
+    if (currentId) {
+      breadcrumb.textContent = `Exibindo filhos do objetivo #${currentId}`;
+      const backUrl = new URL(window.location.href);
+      backUrl.searchParams.delete('id');
+      backLink.href = backUrl.pathname + backUrl.search;
+      backLink.classList.remove('hidden');
+    } else {
+      breadcrumb.textContent = 'Exibindo objetivos raiz';
+    }
+
+    function openModal() {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      goalInput.focus();
+      asRoot.checked = false;
+    }
+
+    function closeModal() {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      goalForm.reset();
+    }
+
+    openModalBtn.addEventListener('click', openModal);
+    closeModalBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) {
+        closeModal();
+      }
+    });
+
+    async function fetchGoals() {
+      try {
+        statusEl.textContent = 'Carregando objetivos...';
+
+        const url = new URL('api.php', window.location.href);
+        if (currentId) {
+          url.searchParams.set('parent_id', currentId);
+        }
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.details || data.error || 'Erro desconhecido ao buscar objetivos.');
+        }
+
+        renderCards(data.items || []);
+      } catch (error) {
+        statusEl.textContent = `Erro: ${error.message}`;
+      }
+    }
+
+    function renderCards(items) {
+      cardsContainer.innerHTML = '';
+
+      if (!items.length) {
+        statusEl.textContent = 'Nenhum objetivo encontrado neste nível.';
+        return;
+      }
+
+      statusEl.textContent = `${items.length} objetivo(s) encontrado(s).`;
+
+      items.forEach((item) => {
+        const card = document.createElement('article');
+        card.className = 'rounded-xl border border-zinc-800 bg-zinc-900 p-4 hover:border-blue-500 transition cursor-pointer';
+        card.innerHTML = `
+          <h3 class="text-base font-semibold mb-2">${escapeHtml(item.goal)}</h3>
+          <p class="inline-block text-xs font-medium rounded-full px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            Último objetivo da família: ${escapeHtml(item.last_goal || item.goal)}
+          </p>
+        `;
+
+        card.addEventListener('click', () => {
+          const next = new URL(window.location.href);
+          next.searchParams.set('id', item.id);
+          window.location.href = next.pathname + next.search;
+        });
+
+        cardsContainer.appendChild(card);
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    goalForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const payload = {
+        goal: goalInput.value.trim(),
+        parent_id: (!asRoot.checked && currentId) ? Number(currentId) : null,
+      };
+
+      if (!payload.goal) {
+        return;
+      }
+
+      try {
+        const response = await fetch('api.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.details || data.error || 'Erro ao salvar objetivo.');
+        }
+
+        closeModal();
+        await fetchGoals();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    fetchGoals();
+  </script>
+</body>
+</html>
