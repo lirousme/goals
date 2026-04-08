@@ -65,19 +65,48 @@ function getDbConnection(): PDO
 
 function ensureGoalsTable(PDO $pdo): void
 {
-    $sql = <<<SQL
+    $goalsSql = <<<SQL
 CREATE TABLE IF NOT EXISTS goals (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     goal VARCHAR(255) NOT NULL,
-    parent_id INT UNSIGNED NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL;
+
+    $linksSql = <<<SQL
+CREATE TABLE IF NOT EXISTS goal_links (
+    parent_id INT UNSIGNED NOT NULL,
+    child_id INT UNSIGNED NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_parent_id (parent_id),
-    CONSTRAINT fk_goals_parent FOREIGN KEY (parent_id)
+    PRIMARY KEY (parent_id, child_id),
+    INDEX idx_goal_links_child (child_id),
+    CONSTRAINT fk_goal_links_parent FOREIGN KEY (parent_id)
         REFERENCES goals(id)
-        ON DELETE SET NULL
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT fk_goal_links_child FOREIGN KEY (child_id)
+        REFERENCES goals(id)
+        ON DELETE CASCADE
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 SQL;
 
-    $pdo->exec($sql);
+    $pdo->exec($goalsSql);
+    $pdo->exec($linksSql);
+
+    // Migração automática de versões antigas (goals.parent_id -> goal_links).
+    $legacyColumnStmt = $pdo->query("SHOW COLUMNS FROM goals LIKE 'parent_id'");
+    $hasLegacyParent = (bool) $legacyColumnStmt->fetch();
+
+    if ($hasLegacyParent) {
+        $pdo->exec(<<<SQL
+INSERT IGNORE INTO goal_links (parent_id, child_id)
+SELECT parent_id, id
+FROM goals
+WHERE parent_id IS NOT NULL;
+SQL);
+        $pdo->exec('ALTER TABLE goals DROP FOREIGN KEY fk_goals_parent');
+        $pdo->exec('ALTER TABLE goals DROP INDEX idx_parent_id');
+        $pdo->exec('ALTER TABLE goals DROP COLUMN parent_id');
+    }
 }
